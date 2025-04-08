@@ -19,11 +19,26 @@ class Proposer
   end
 end
 
-class Prepare
+class Prepare < Proposer
   attr_accessor :proposer_id, :id
 
   def initialize(proposer_id)
     @proposer_id = proposer_id
     @id = Proposer.find(proposer_id).next_message_id
+  end
+end
+
+class Acceptor
+  attr_accessor :minimum_n, :maximum_n
+
+  def initialize(minimum_n)
+    @minimum_n = minimum_n
+    @maximum_n = 0
+  end
+
+  def accept?(prepare_n)
+    return false unless prepare_n > minimum_n
+
+    @maximum_n
   end
 end
