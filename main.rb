@@ -1,44 +1,18 @@
-require 'securerandom'
-require 'objspace'
+### TCP SOCKET
 
-class Proposer
-  attr_accessor :id, :last_message
+proposer_to_acceptor_reader, proposer_to_acceptor_write = IO.pipe
 
-  def initialize(id, last_message)
-    @id = id
-    @last_message = last_message
-  end
-
-  def self.find(id)
-    proposers = ObjectSpace.each_object(self).to_a
-    proposers.find { |proposer| proposer.id == id }
-  end
-
-  def next_message_id
-    @last_message + 1
+acceptors_quorum = 5.times.map do
+  fork do
+    prepare = proposer_to_acceptor_reader.gets
+    p prepare
+      if prepare == 'TU-TU-RU'
+        p 'TU-TU-RU'
+      end
   end
 end
 
-class Prepare < Proposer
-  attr_accessor :proposer_id, :id
+proposer_to_acceptor_write.puts 'TU-TU-RU'
 
-  def initialize(proposer_id)
-    @proposer_id = proposer_id
-    @id = Proposer.find(proposer_id).next_message_id
-  end
-end
 
-class Acceptor
-  attr_accessor :minimum_n, :maximum_n
 
-  def initialize(minimum_n)
-    @minimum_n = minimum_n
-    @maximum_n = 0
-  end
-
-  def accept?(prepare_n)
-    return false unless prepare_n > minimum_n
-
-    @maximum_n
-  end
-end
