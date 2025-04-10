@@ -1,18 +1,36 @@
 ### TCP SOCKET
+require 'socket'
 
-proposer_to_acceptor_reader, proposer_to_acceptor_write = IO.pipe
-
-acceptors_quorum = 5.times.map do
+i = 1
+ports = []
+5.times do |index|
+  ports << 5000 + index
+end
+p ports
+ports.map do |port|
   fork do
-    prepare = proposer_to_acceptor_reader.gets
-    p prepare
-      if prepare == 'TU-TU-RU'
-        p 'TU-TU-RU'
-      end
+    server = TCPServer.new('localhost', port)
+    i += 1
+    pid = Process.pid
+    loop do
+      p "Starting server at process #{pid}"
+      client = server.accept
+      response = "HTTP/1.1 200 OK\r\n" +
+        "Content-Type: text/plain\r\n" +
+        "Connection: close\r\n" +
+        "\r\n" +
+        "TU-TU-RU! from #{pid} port #{port}"
+
+      client.puts(response)
+      client.close
+    end
   end
 end
 
-proposer_to_acceptor_write.puts 'TU-TU-RU'
-
-
-
+ports.each do |port|
+  socket = TCPSocket.new('localhost', port)
+  while line = socket.gets
+    puts line
+  end
+  socket.close
+end
