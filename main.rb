@@ -1,33 +1,49 @@
 require 'socket'
 require 'json'
+require 'open3'
 
 def with_sockets(ports)
   ports.each do |port|
     socket = TCPSocket.new('localhost', port)
     yield(socket)
     socket.close
+  rescue Errno::ECONNREFUSED
+    puts "Connection refused on port #{port}"
   end
 end
 
 quorum_ports = (5000..5004).to_a
-acceptor_pids = quorum_ports.map do |port|
+pids = quorum_ports.map do |port|
   fork do
     server = TCPServer.new('localhost', port)
     at_exit { server.close }
 
     promise_number = 0
     highest_proposal = nil
+    accepted_proposal = nil
 
     loop do
       client = server.accept
       request = client.gets
       data = JSON.parse(request)
+      proposer_id = data['proposer_id']
 
       case data['action']
+      when 'accept'
+        if proposer_id >= promise_number
+          accepted_proposal = [proposer_id, data['value']]
+          highest_proposal = [proposer_id, data['value']]
+          response = {
+            accepted: true,
+            accepted_proposal: accepted_proposal
+          }
+        else
+          response = {
+            accepted: false
+          }
+        end
       when 'prepare'
-        proposer_id = data['proposer_id']
-        if proposer_id > promise_number
-          highest_proposal = [proposer_id, data['value']] if data['value']
+        if proposer_id >= promise_number
           promise_number = proposer_id
           response = {
             promise: true,
@@ -37,10 +53,10 @@ acceptor_pids = quorum_ports.map do |port|
         else
           response = { promise: false }
         end
-        client.puts(response.to_json)
       else
         puts "#{data}"
       end
+      client.puts(response.to_json)
 
       client.close
     end
@@ -48,7 +64,7 @@ acceptor_pids = quorum_ports.map do |port|
 end
 
 proposer_ports = (3000..3001).to_a
-proposer_pids = proposer_ports.map do |port|
+proposer_ports.map do |port|
   fork do
     server = TCPServer.new('localhost', port)
     at_exit { server.close }
@@ -68,13 +84,11 @@ proposer_pids = proposer_ports.map do |port|
 
         message = { proposer_id: proposer_id, action: 'prepare' }.to_json
         with_sockets(quorum_ports) do |acceptor|
-          begin
-            acceptor.puts(message)
-            response = acceptor.gets
-            acceptors_responses << JSON.parse(response)
-          rescue => e
-            puts "Failed to contact acceptor: #{e.message}"
-          end
+          acceptor.puts(message)
+          response = acceptor.gets
+          acceptors_responses << JSON.parse(response)
+        rescue StandardError => e
+          puts "Failed to contact acceptor: #{e.message}"
         end
 
         quorum = acceptors_responses.select { |r| r['promise'] }
@@ -86,15 +100,21 @@ proposer_pids = proposer_ports.map do |port|
                   data_value
                 end
 
-        proposal_msg = { proposal_id: proposer_id, value: value }.to_json
-        p 'Sending proposal:', proposal_msg
+        proposal_msg = { proposer_id: proposer_id, value: value, action: 'accept' }.to_json
 
+        accept_responses = []
         with_sockets(quorum_ports) do |acceptor|
-          begin
-            acceptor.puts(proposal_msg)
-          rescue => e
-            puts "Failed to send proposal: #{e.message}"
-          end
+          acceptor.puts(proposal_msg)
+          response = acceptor.gets
+          accept_responses << JSON.parse(response)
+        rescue StandardError => e
+          puts "Failed to send proposal: #{e.message}"
+        end
+        accepts = accept_responses.select { |r| r['accepted'] }
+        if accepts.length > 3
+          p "Message Accept with value #{accepts}"
+        else
+          p "Message not accept"
         end
       end
 
@@ -110,5 +130,32 @@ proposer_ports.each do |port|
   proposer.close
 end
 
-Process.waitall
+message = { action: 'prepare', value: 100 }.to_json
+proposer_ports.each do |port|
+  proposer = TCPSocket.new('localhost', port)
+  proposer.puts(message)
+  proposer.close
+end
 
+message = { action: 'prepare', value: 200 }.to_json
+proposer_ports.each do |port|
+  proposer = TCPSocket.new('localhost', port)
+  proposer.puts(message)
+  proposer.close
+end
+
+sleep(2.0)
+
+pids.sample(4).each do |pid|
+  puts "Killing PID #{pid}"
+  Process.kill('KILL', pid)
+end
+
+message = { action: 'prepare', value: 300 }.to_json
+proposer_ports.each do |port|
+  proposer = TCPSocket.new('localhost', port)
+  proposer.puts(message)
+  proposer.close
+end
+
+Process.waitall
